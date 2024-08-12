@@ -2,4 +2,7 @@ archive
 sample.py
 .venv
 .ipynb_checkpoints
+gun_sound_classification_performance.png
+/graphs
+dataset
 
