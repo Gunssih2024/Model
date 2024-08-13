@@ -1,3 +1,4 @@
+import joblib
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,6 +10,7 @@ from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import time
+import librosa
 
 
 def towav(file_path):
@@ -38,6 +40,13 @@ def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=300
     top_peak_magnitudes = peak_magnitudes[sorted_indices][:num_peaks]
     top_peak_magnitudes = top_peak_magnitudes / np.max(top_peak_magnitudes)
     return top_peak_frequencies, top_peak_magnitudes
+
+
+def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
+    mfccs = librosa.feature.mfcc(
+        y=audio_data.astype(float), sr=sample_rate, n_mfcc=n_mfcc
+    )
+    return mfccs
 
 
 def read_audio(file_path):
@@ -79,9 +88,19 @@ def process_sound_files(input_dir, label):
     for wav_file in wav_files:
         wav_file_path = os.path.join(input_dir, wav_file)
         sample_rate, audio_data = read_audio(wav_file_path)
+
+        # Compute FFT
         freq, audio_fft = compute_fourier_transform(audio_data, sample_rate)
         peak_frequencies, peak_magnitudes = find_magnitude_peaks(freq, audio_fft)
-        features = np.concatenate((peak_frequencies, peak_magnitudes))
+
+        # Compute MFCC
+        mfccs = compute_mfcc(audio_data, sample_rate)
+
+        # Combine features
+        fft_features = np.concatenate((peak_frequencies, peak_magnitudes))
+        mfcc_features = np.mean(mfccs, axis=1)  # Take the mean of each MFCC coefficient
+        features = np.concatenate((fft_features, mfcc_features))
+
         features_list.append(features)
         labels.append(label)
 
@@ -135,8 +154,9 @@ if __name__ == "__main__":
         batch_size=16,  # Start with 16; adjust if necessary based on memory usage
         validation_split=0.2,
         verbose=1,
-        callbacks=[early_stopping],  # Add early stopping
     )
+
+    joblib.dump(scaler, "scaler.joblib")
 
     plt.plot(history.history["accuracy"])
     plt.plot(history.history["val_accuracy"])
@@ -153,6 +173,7 @@ if __name__ == "__main__":
     model_save_path = f"graph/sih_gun_{int(time.time())}"
     tf.saved_model.save(model, model_save_path)
     print(f"Model saved to: {model_save_path}")
+    model.save("handrecognition_model.h5")
 
     test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
     test_features_nongun, test_labels_nongun = process_sound_files(
