@@ -146,11 +146,12 @@ def process_sound_files(input_dir, label):
 
 
 if __name__ == "__main__":
-    input_gun_dir = "./dataset/train/guns/"
-    input_nongun_dir = "./dataset/train/non guns/"
-    output_directory = "./graphs/"
-    test_gun_dir = "./dataset/test/guns/"
-    test_nongun_dir = "./dataset/test/non guns/"
+    # Set Dir Path Here
+    input_gun_dir = "/dataset/train/guns/"
+    input_nongun_dir = "/dataset/train/non guns/"
+    output_directory = "/graphs/"
+    test_gun_dir = "/dataset/test/guns/"
+    test_nongun_dir = "/dataset/test/non guns/"
     os.makedirs(output_directory, exist_ok=True)
 
     gun_features, gun_labels = process_sound_files(input_gun_dir, label=1)
