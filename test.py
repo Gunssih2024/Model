@@ -8,12 +8,27 @@ from main import (
     compute_mfcc,
     find_magnitude_peaks,
     convert_all_mp3_to_wav,
-    towav,
 )
+import os
 import joblib
+import tensorflow as tf
+from pydub import AudioSegment
+
+
+def towav(file_path):
+    base = os.path.splitext(file_path)[0]
+    audio = AudioSegment.from_mp3(file_path)
+    wav_file_path = f"{base}.wav"
+    audio.export(wav_file_path, format="wav")
+    print(f"Converted {file_path} to {wav_file_path}")
+    return wav_file_path
 
 
 def predict_audio(model_path, audio_file_path, scaler):
+    # Check if the file is an mp3 and convert if necessary
+    if audio_file_path.endswith(".mp3"):
+        audio_file_path = towav(audio_file_path)
+
     # Load the trained model
     model = tf.keras.models.load_model(model_path)
 
@@ -40,8 +55,11 @@ def predict_audio(model_path, audio_file_path, scaler):
         features_reshaped.reshape(-1, features_reshaped.shape[-1])
     ).reshape(features_reshaped.shape)
 
+    print(features_scaled)
+
     # Make prediction
     prediction = model.predict(features_scaled)
+    print(prediction)
 
     # Interpret the result
     if prediction[0][0] > 0.6:
@@ -50,8 +68,9 @@ def predict_audio(model_path, audio_file_path, scaler):
         return "Non-gun sound detected"
 
 
+# Example usage
 scaler = joblib.load("scaler.joblib")
-model_path = "handrecognition_model.h5"
-audio_file_path = "./test/mixkit-game-gun-shot-1662.mp3"
+model_path = "handrecognition_model_v2.h5"
+audio_file_path = "./dataset/test/non guns/fireworks-29629.wav"
 result = predict_audio(model_path, audio_file_path, scaler)
 print(result)

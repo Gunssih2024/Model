@@ -5,4 +5,6 @@ sample.py
 gun_sound_classification_performance.png
 /graphs
 dataset
+/__pycache__
+models/
 

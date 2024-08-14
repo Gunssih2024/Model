@@ -12,6 +12,8 @@ from sklearn.preprocessing import StandardScaler
 import time
 import librosa
 
+print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+
 
 def towav(file_path):
     base = os.path.splitext(file_path)[0]
@@ -61,6 +63,40 @@ def compute_fourier_transform(audio_data, sample_rate):
     freq = np.fft.fftfreq(n, d=1 / sample_rate)
     audio_fft = np.fft.fft(audio_data)
     return freq, np.abs(audio_fft)
+
+
+def train_with_manual_backprop(
+    model, X_train, y_train, X_val, y_val, epochs, batch_size
+):
+    optimizer = tf.keras.optimizers.Adam()
+    loss_fn = tf.keras.losses.BinaryCrossentropy()
+
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
+        batch_size
+    )
+    val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val)).batch(batch_size)
+
+    for epoch in range(epochs):
+        print(f"\nEpoch {epoch+1}/{epochs}")
+
+        # Training loop
+        for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
+            with tf.GradientTape() as tape:
+                logits = model(x_batch_train, training=True)
+                loss_value = loss_fn(y_batch_train, logits)
+
+            grads = tape.gradient(loss_value, model.trainable_weights)
+            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+            if step % 10 == 0:
+                print(f"Training loss at step {step}: {loss_value.numpy()}")
+
+        # Validation loop
+        val_logits = model.predict(X_val, batch_size=batch_size)
+        val_loss = loss_fn(y_val, val_logits)
+        print(f"Validation loss after epoch {epoch+1}: {val_loss.numpy()}")
+
+    return model
 
 
 def create_cnn_model(input_shape):
@@ -143,6 +179,9 @@ if __name__ == "__main__":
     )
 
     model = create_cnn_model((features_array.shape[1], 1))
+    model = train_with_manual_backprop(
+        model, X_train_scaled, y_train, X_test_scaled, y_test, epochs=50, batch_size=16
+    )
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor="val_loss", patience=5, restore_best_weights=True
     )
@@ -173,7 +212,7 @@ if __name__ == "__main__":
     model_save_path = f"graph/sih_gun_{int(time.time())}"
     tf.saved_model.save(model, model_save_path)
     print(f"Model saved to: {model_save_path}")
-    model.save("handrecognition_model.h5")
+    model.save("handrecognition_model_v2.h5")
 
     test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
     test_features_nongun, test_labels_nongun = process_sound_files(
