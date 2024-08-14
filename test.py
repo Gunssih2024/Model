@@ -60,8 +60,9 @@ def predict_audio(model_path, audio_file_path, scaler):
 
 
 # Edit dir here
+current = os.getcwd()
 scaler = joblib.load("scaler.joblib")
-model_path = "handrecognition_model_v2.h5"
-audio_file_path = "/dataset/test/non guns/fireworks-29629.wav"
+model_path = "./handrecognition_model_v2.h5"
+audio_file_path = os.path.join(current, "dataset/test/non guns/fireworks-29629.wav")
 result = predict_audio(model_path, audio_file_path, scaler)
 print(result)

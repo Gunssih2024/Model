@@ -70,7 +70,12 @@ def train_with_manual_backprop(
 ):
     optimizer = tf.keras.optimizers.Adam()
     loss_fn = tf.keras.losses.BinaryCrossentropy()
+    train_loss = []
+    train_accuracy = []
+    val_loss = []
+    val_accuracy = []
 
+    # Prepare the training and validation datasets
     train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
         batch_size
     )
@@ -78,6 +83,12 @@ def train_with_manual_backprop(
 
     for epoch in range(epochs):
         print(f"\nEpoch {epoch+1}/{epochs}")
+
+        # Initialize metrics for each epoch
+        epoch_train_loss = tf.keras.metrics.Mean()
+        epoch_train_accuracy = tf.keras.metrics.BinaryAccuracy()
+        epoch_val_loss = tf.keras.metrics.Mean()
+        epoch_val_accuracy = tf.keras.metrics.BinaryAccuracy()
 
         # Training loop
         for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
@@ -88,15 +99,43 @@ def train_with_manual_backprop(
             grads = tape.gradient(loss_value, model.trainable_weights)
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
+            # Update metrics
+            epoch_train_loss.update_state(loss_value)
+            epoch_train_accuracy.update_state(y_batch_train, logits)
+
             if step % 10 == 0:
                 print(f"Training loss at step {step}: {loss_value.numpy()}")
 
-        # Validation loop
-        val_logits = model.predict(X_val, batch_size=batch_size)
-        val_loss = loss_fn(y_val, val_logits)
-        print(f"Validation loss after epoch {epoch+1}: {val_loss.numpy()}")
+        # End of epoch: calculate validation metrics
+        for x_batch_val, y_batch_val in val_dataset:
+            val_logits = model(x_batch_val, training=False)
+            val_loss_value = loss_fn(y_batch_val, val_logits)
 
-    return model
+            epoch_val_loss.update_state(val_loss_value)
+            epoch_val_accuracy.update_state(y_batch_val, val_logits)
+
+        # Store the metrics for this epoch
+        train_loss.append(epoch_train_loss.result().numpy())
+        train_accuracy.append(epoch_train_accuracy.result().numpy())
+        val_loss.append(epoch_val_loss.result().numpy())
+        val_accuracy.append(epoch_val_accuracy.result().numpy())
+
+        print(
+            f"Epoch {epoch+1} - Training Loss: {epoch_train_loss.result().numpy()}, "
+            f"Training Accuracy: {epoch_train_accuracy.result().numpy()}, "
+            f"Validation Loss: {epoch_val_loss.result().numpy()}, "
+            f"Validation Accuracy: {epoch_val_accuracy.result().numpy()}"
+        )
+
+    # Return the model and the history of metrics
+    history = {
+        "train_loss": train_loss,
+        "train_accuracy": train_accuracy,
+        "val_loss": val_loss,
+        "val_accuracy": val_accuracy,
+    }
+
+    return model, history
 
 
 def create_cnn_model(input_shape):
@@ -146,13 +185,15 @@ def process_sound_files(input_dir, label):
 
 
 if __name__ == "__main__":
+    current_dir = os.getcwd()
+    print(current_dir)
     # Set Dir Path Here
-    input_gun_dir = "/dataset/train/guns/"
-    input_nongun_dir = "/dataset/train/non guns/"
-    output_directory = "/graphs/"
-    test_gun_dir = "/dataset/test/guns/"
-    test_nongun_dir = "/dataset/test/non guns/"
-    os.makedirs(output_directory, exist_ok=True)
+    input_gun_dir = os.path.join(current_dir, "dataset/train/guns/")
+    print(input_gun_dir)
+    input_nongun_dir = os.path.join(current_dir, "dataset/train/non guns/")
+    output_directory = os.path.join(current_dir, "graph/")
+    test_gun_dir = os.path.join(current_dir, "dataset/test/guns/")
+    test_nongun_dir = os.path.join(current_dir, "dataset/test/non guns/")
 
     gun_features, gun_labels = process_sound_files(input_gun_dir, label=1)
     nongun_features, nongun_labels = process_sound_files(input_nongun_dir, label=0)
@@ -180,39 +221,40 @@ if __name__ == "__main__":
     )
 
     model = create_cnn_model((features_array.shape[1], 1))
-    model = train_with_manual_backprop(
+    model, history = train_with_manual_backprop(
         model, X_train_scaled, y_train, X_test_scaled, y_test, epochs=50, batch_size=16
-    )
-    early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=5, restore_best_weights=True
-    )
-
-    history = model.fit(
-        X_train_scaled,
-        y_train,
-        epochs=50,  # Start with 50 and use early stopping to halt if necessary
-        batch_size=16,  # Start with 16; adjust if necessary based on memory usage
-        validation_split=0.2,
-        verbose=1,
     )
 
     joblib.dump(scaler, "scaler.joblib")
+    plt.figure(figsize=(10, 6))
 
-    plt.plot(history.history["accuracy"])
-    plt.plot(history.history["val_accuracy"])
-    plt.title("Model Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.legend(["Training Accuracy", "Validation Accuracy"])
-    plt.savefig("model_analysis.png")
+    epochs_range = range(1, len(history["train_loss"]) + 1)
+
+    plt.plot(
+        epochs_range, history["train_accuracy"], label="Train Accuracy", color="blue"
+    )
+    plt.plot(
+        epochs_range,
+        history["val_accuracy"],
+        label="Validation Accuracy",
+        color="green",
+    )
+    plt.plot(epochs_range, history["train_loss"], label="Train Loss", color="red")
+    plt.plot(epochs_range, history["val_loss"], label="Validation Loss", color="orange")
+
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy/Loss")
+    plt.title("Accuracy and Loss over Epochs")
+    plt.legend(loc="best")
+    plt.grid(True)
+
+    # Save the plot
+    plot_path = os.path.join(output_directory, "accuracy_loss_graph.png")
+    plt.savefig(plot_path)
     plt.show()
-
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
     print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    model_save_path = f"graph/sih_gun_{int(time.time())}"
-    tf.saved_model.save(model, model_save_path)
-    print(f"Model saved to: {model_save_path}")
     model.save("handrecognition_model_v2.h5")
 
     test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
