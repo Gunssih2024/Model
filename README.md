@@ -21,3 +21,9 @@ dataset
    4) python3 main.py
   
    5) h5, graph and  would be stored in root dir
+  
+5) For testing model :-
+
+6) 1) edit audio file path that you want to test
+  
+   2) python3 test.py
