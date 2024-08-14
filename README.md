@@ -14,7 +14,7 @@ dataset
 
 4) 1) python3 -m venv .venv
   
-   2) pip install librosa tensorflow joblib numpy matplotlib pydub scipy scikit-learn
+   2) pip install librosa joblib numpy matplotlib pydub scipy scikit-learn tensorflow[and-cuda]
   
    3) ensure that dataset folder is present
   
