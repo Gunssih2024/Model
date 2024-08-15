@@ -30,24 +30,11 @@ def convert_all_mp3_to_wav(input_sound_dir):
     return wav_files
 
 
-def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=3000):
-    mask = (freq >= min_freq) & (freq <= max_freq)
-    freq_filtered = freq[mask]
-    audio_fft_filtered = audio_fft[mask]
-    peaks, _ = find_peaks(audio_fft_filtered)
-    peak_frequencies = freq_filtered[peaks]
-    peak_magnitudes = audio_fft_filtered[peaks]
-    sorted_indices = np.argsort(peak_magnitudes)[::-1]
-    top_peak_frequencies = peak_frequencies[sorted_indices][:num_peaks]
-    top_peak_magnitudes = peak_magnitudes[sorted_indices][:num_peaks]
-    top_peak_magnitudes = top_peak_magnitudes / np.max(top_peak_magnitudes)
-    return top_peak_frequencies, top_peak_magnitudes
-
-
 def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
     mfccs = librosa.feature.mfcc(
         y=audio_data.astype(float), sr=sample_rate, n_mfcc=n_mfcc
     )
+    print(mfccs)
     return mfccs
 
 
@@ -56,13 +43,6 @@ def read_audio(file_path):
     if len(audio_data.shape) > 1:
         audio_data = np.mean(audio_data, axis=1)
     return sample_rate, audio_data
-
-
-def compute_fourier_transform(audio_data, sample_rate):
-    n = len(audio_data)
-    freq = np.fft.fftfreq(n, d=1 / sample_rate)
-    audio_fft = np.fft.fft(audio_data)
-    return freq, np.abs(audio_fft)
 
 
 def train_with_manual_backprop(
@@ -164,19 +144,11 @@ def process_sound_files(input_dir, label):
         wav_file_path = os.path.join(input_dir, wav_file)
         sample_rate, audio_data = read_audio(wav_file_path)
 
-        # Compute FFT
-        freq, audio_fft = compute_fourier_transform(audio_data, sample_rate)
-        peak_frequencies, peak_magnitudes = find_magnitude_peaks(freq, audio_fft)
-
-        # Compute MFCC
         mfccs = compute_mfcc(audio_data, sample_rate)
 
-        # Combine features
-        fft_features = np.concatenate((peak_frequencies, peak_magnitudes))
         mfcc_features = np.mean(mfccs, axis=1)  # Take the mean of each MFCC coefficient
-        features = np.concatenate((fft_features, mfcc_features))
 
-        features_list.append(features)
+        features_list.append(mfcc_features)
         labels.append(label)
 
         print(f"Processed: {wav_file}")
@@ -186,11 +158,8 @@ def process_sound_files(input_dir, label):
 
 if __name__ == "__main__":
     current_dir = os.getcwd()
-    print(current_dir)
-    # Set Dir Path Here
     input_gun_dir = os.path.join(current_dir, "dataset/train/guns/")
-    print(input_gun_dir)
-    input_nongun_dir = os.path.join(current_dir, "dataset/train/non guns/")
+    input_nongun_dir = os.path.join(current_dir, "dataset-test/train/non guns/")
     output_directory = os.path.join(current_dir, "graph/")
     test_gun_dir = os.path.join(current_dir, "dataset/test/guns/")
     test_nongun_dir = os.path.join(current_dir, "dataset/test/non guns/")
@@ -255,7 +224,7 @@ if __name__ == "__main__":
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
     print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    model.save("handrecognition_model_v2.h5")
+    model.save(current_dir + "models/handrecognition_model.h5")
 
     test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
     test_features_nongun, test_labels_nongun = process_sound_files(
