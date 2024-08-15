@@ -1,3 +1,4 @@
+from time import time
 import joblib
 import os
 import numpy as np
@@ -9,7 +10,6 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import time
 import librosa
 
 print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
@@ -34,7 +34,6 @@ def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
     mfccs = librosa.feature.mfcc(
         y=audio_data.astype(float), sr=sample_rate, n_mfcc=n_mfcc
     )
-    print(mfccs)
     return mfccs
 
 
@@ -135,7 +134,19 @@ def create_cnn_model(input_shape):
     return model
 
 
-def process_sound_files(input_dir, label):
+def add_noise(audio_data, noise_type="white", noise_level=0.005):
+    if noise_type == "white":
+        noise = np.random.normal(0, 1, len(audio_data))
+    elif noise_type == "normal":
+        noise = np.random.normal(0, 1, len(audio_data)) * np.std(audio_data)
+    else:
+        raise ValueError("Unsupported noise type. Use 'white' or 'normal'.")
+
+    augmented_audio = audio_data + noise_level * noise
+    return augmented_audio
+
+
+def process_sound_files(input_dir, label, augment_with_noise=False):
     wav_files = convert_all_mp3_to_wav(input_dir)
     features_list = []
     labels = []
@@ -144,14 +155,30 @@ def process_sound_files(input_dir, label):
         wav_file_path = os.path.join(input_dir, wav_file)
         sample_rate, audio_data = read_audio(wav_file_path)
 
+        # Original MFCC computation
         mfccs = compute_mfcc(audio_data, sample_rate)
-
         mfcc_features = np.mean(mfccs, axis=1)  # Take the mean of each MFCC coefficient
-
         features_list.append(mfcc_features)
         labels.append(label)
 
         print(f"Processed: {wav_file}")
+
+        if augment_with_noise:
+            # Augment with white noise
+            augmented_audio_white = add_noise(audio_data, noise_type="white")
+            mfccs_white = compute_mfcc(augmented_audio_white, sample_rate)
+            mfcc_features_white = np.mean(mfccs_white, axis=1)
+            features_list.append(mfcc_features_white)
+            labels.append(label)
+            print(f"Processed with white noise: {wav_file}")
+
+            # Augment with normal noise
+            augmented_audio_normal = add_noise(audio_data, noise_type="normal")
+            mfccs_normal = compute_mfcc(augmented_audio_normal, sample_rate)
+            mfcc_features_normal = np.mean(mfccs_normal, axis=1)
+            features_list.append(mfcc_features_normal)
+            labels.append(label)
+            print(f"Processed with normal noise: {wav_file}")
 
     return np.array(features_list), np.array(labels)
 
@@ -159,13 +186,17 @@ def process_sound_files(input_dir, label):
 if __name__ == "__main__":
     current_dir = os.getcwd()
     input_gun_dir = os.path.join(current_dir, "dataset/train/guns/")
-    input_nongun_dir = os.path.join(current_dir, "dataset-test/train/non guns/")
+    input_nongun_dir = os.path.join(current_dir, "dataset/train/non guns/")
     output_directory = os.path.join(current_dir, "graph/")
     test_gun_dir = os.path.join(current_dir, "dataset/test/guns/")
     test_nongun_dir = os.path.join(current_dir, "dataset/test/non guns/")
 
-    gun_features, gun_labels = process_sound_files(input_gun_dir, label=1)
-    nongun_features, nongun_labels = process_sound_files(input_nongun_dir, label=0)
+    gun_features, gun_labels = process_sound_files(
+        input_gun_dir, label=1, augment_with_noise=True
+    )
+    nongun_features, nongun_labels = process_sound_files(
+        input_nongun_dir, label=0, augment_with_noise=True
+    )
 
     features_array = np.vstack((gun_features, nongun_features))
     labels = np.hstack((gun_labels, nongun_labels))
@@ -217,18 +248,20 @@ if __name__ == "__main__":
     plt.legend(loc="best")
     plt.grid(True)
 
-    # Save the plot
-    plot_path = os.path.join(output_directory, "accuracy_loss_graph.png")
+    plot_path = os.path.join(output_directory, "accuracy_loss_graph_v2.png")
     plt.savefig(plot_path)
     plt.show()
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
     print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    model.save(current_dir + "models/handrecognition_model.h5")
+    path = os.path.join(current_dir, "models/handrecognition_model.h5")
+    model.save(path)
 
-    test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
+    test_features_gun, test_labels_gun = process_sound_files(
+        test_gun_dir, label=1, augment_with_noise=True
+    )
     test_features_nongun, test_labels_nongun = process_sound_files(
-        test_nongun_dir, label=0
+        test_nongun_dir, label=0, augment_with_noise=True
     )
 
     test_features = np.vstack((test_features_gun, test_features_nongun))
