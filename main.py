@@ -1,5 +1,3 @@
-from time import time
-import joblib
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,9 +8,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import librosa
-
-print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+import time
 
 
 def towav(file_path):
@@ -30,11 +26,18 @@ def convert_all_mp3_to_wav(input_sound_dir):
     return wav_files
 
 
-def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
-    mfccs = librosa.feature.mfcc(
-        y=audio_data.astype(float), sr=sample_rate, n_mfcc=n_mfcc
-    )
-    return mfccs
+def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=3000):
+    mask = (freq >= min_freq) & (freq <= max_freq)
+    freq_filtered = freq[mask]
+    audio_fft_filtered = audio_fft[mask]
+    peaks, _ = find_peaks(audio_fft_filtered)
+    peak_frequencies = freq_filtered[peaks]
+    peak_magnitudes = audio_fft_filtered[peaks]
+    sorted_indices = np.argsort(peak_magnitudes)[::-1]
+    top_peak_frequencies = peak_frequencies[sorted_indices][:num_peaks]
+    top_peak_magnitudes = peak_magnitudes[sorted_indices][:num_peaks]
+    top_peak_magnitudes = top_peak_magnitudes / np.max(top_peak_magnitudes)
+    return top_peak_frequencies, top_peak_magnitudes
 
 
 def read_audio(file_path):
@@ -44,77 +47,11 @@ def read_audio(file_path):
     return sample_rate, audio_data
 
 
-def train_with_manual_backprop(
-    model, X_train, y_train, X_val, y_val, epochs, batch_size
-):
-    optimizer = tf.keras.optimizers.Adam()
-    loss_fn = tf.keras.losses.BinaryCrossentropy()
-    train_loss = []
-    train_accuracy = []
-    val_loss = []
-    val_accuracy = []
-
-    # Prepare the training and validation datasets
-    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
-        batch_size
-    )
-    val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val)).batch(batch_size)
-
-    for epoch in range(epochs):
-        print(f"\nEpoch {epoch+1}/{epochs}")
-
-        # Initialize metrics for each epoch
-        epoch_train_loss = tf.keras.metrics.Mean()
-        epoch_train_accuracy = tf.keras.metrics.BinaryAccuracy()
-        epoch_val_loss = tf.keras.metrics.Mean()
-        epoch_val_accuracy = tf.keras.metrics.BinaryAccuracy()
-
-        # Training loop
-        for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
-            with tf.GradientTape() as tape:
-                logits = model(x_batch_train, training=True)
-                loss_value = loss_fn(y_batch_train, logits)
-
-            grads = tape.gradient(loss_value, model.trainable_weights)
-            optimizer.apply_gradients(zip(grads, model.trainable_weights))
-
-            # Update metrics
-            epoch_train_loss.update_state(loss_value)
-            epoch_train_accuracy.update_state(y_batch_train, logits)
-
-            if step % 10 == 0:
-                print(f"Training loss at step {step}: {loss_value.numpy()}")
-
-        # End of epoch: calculate validation metrics
-        for x_batch_val, y_batch_val in val_dataset:
-            val_logits = model(x_batch_val, training=False)
-            val_loss_value = loss_fn(y_batch_val, val_logits)
-
-            epoch_val_loss.update_state(val_loss_value)
-            epoch_val_accuracy.update_state(y_batch_val, val_logits)
-
-        # Store the metrics for this epoch
-        train_loss.append(epoch_train_loss.result().numpy())
-        train_accuracy.append(epoch_train_accuracy.result().numpy())
-        val_loss.append(epoch_val_loss.result().numpy())
-        val_accuracy.append(epoch_val_accuracy.result().numpy())
-
-        print(
-            f"Epoch {epoch+1} - Training Loss: {epoch_train_loss.result().numpy()}, "
-            f"Training Accuracy: {epoch_train_accuracy.result().numpy()}, "
-            f"Validation Loss: {epoch_val_loss.result().numpy()}, "
-            f"Validation Accuracy: {epoch_val_accuracy.result().numpy()}"
-        )
-
-    # Return the model and the history of metrics
-    history = {
-        "train_loss": train_loss,
-        "train_accuracy": train_accuracy,
-        "val_loss": val_loss,
-        "val_accuracy": val_accuracy,
-    }
-
-    return model, history
+def compute_fourier_transform(audio_data, sample_rate):
+    n = len(audio_data)
+    freq = np.fft.fftfreq(n, d=1 / sample_rate)
+    audio_fft = np.fft.fft(audio_data)
+    return freq, np.abs(audio_fft)
 
 
 def create_cnn_model(input_shape):
@@ -134,19 +71,7 @@ def create_cnn_model(input_shape):
     return model
 
 
-def add_noise(audio_data, noise_type="white", noise_level=0.005):
-    if noise_type == "white":
-        noise = np.random.normal(0, 1, len(audio_data))
-    elif noise_type == "normal":
-        noise = np.random.normal(0, 1, len(audio_data)) * np.std(audio_data)
-    else:
-        raise ValueError("Unsupported noise type. Use 'white' or 'normal'.")
-
-    augmented_audio = audio_data + noise_level * noise
-    return augmented_audio
-
-
-def process_sound_files(input_dir, label, augment_with_noise=False):
+def process_sound_files(input_dir, label):
     wav_files = convert_all_mp3_to_wav(input_dir)
     features_list = []
     labels = []
@@ -154,49 +79,27 @@ def process_sound_files(input_dir, label, augment_with_noise=False):
     for wav_file in wav_files:
         wav_file_path = os.path.join(input_dir, wav_file)
         sample_rate, audio_data = read_audio(wav_file_path)
-
-        # Original MFCC computation
-        mfccs = compute_mfcc(audio_data, sample_rate)
-        mfcc_features = np.mean(mfccs, axis=1)  # Take the mean of each MFCC coefficient
-        features_list.append(mfcc_features)
+        freq, audio_fft = compute_fourier_transform(audio_data, sample_rate)
+        peak_frequencies, peak_magnitudes = find_magnitude_peaks(freq, audio_fft)
+        features = np.concatenate((peak_frequencies, peak_magnitudes))
+        features_list.append(features)
         labels.append(label)
 
         print(f"Processed: {wav_file}")
-
-        if augment_with_noise:
-            # Augment with white noise
-            augmented_audio_white = add_noise(audio_data, noise_type="white")
-            mfccs_white = compute_mfcc(augmented_audio_white, sample_rate)
-            mfcc_features_white = np.mean(mfccs_white, axis=1)
-            features_list.append(mfcc_features_white)
-            labels.append(label)
-            print(f"Processed with white noise: {wav_file}")
-
-            # Augment with normal noise
-            augmented_audio_normal = add_noise(audio_data, noise_type="normal")
-            mfccs_normal = compute_mfcc(augmented_audio_normal, sample_rate)
-            mfcc_features_normal = np.mean(mfccs_normal, axis=1)
-            features_list.append(mfcc_features_normal)
-            labels.append(label)
-            print(f"Processed with normal noise: {wav_file}")
 
     return np.array(features_list), np.array(labels)
 
 
 if __name__ == "__main__":
-    current_dir = os.getcwd()
-    input_gun_dir = os.path.join(current_dir, "dataset/train/guns/")
-    input_nongun_dir = os.path.join(current_dir, "dataset/train/non guns/")
-    output_directory = os.path.join(current_dir, "graph/")
-    test_gun_dir = os.path.join(current_dir, "dataset/test/guns/")
-    test_nongun_dir = os.path.join(current_dir, "dataset/test/non guns/")
+    input_gun_dir = "./dataset/train/guns/"
+    input_nongun_dir = "./dataset/train/non guns/"
+    output_directory = "./graphs/"
+    test_gun_dir = "./dataset/test/guns/"
+    test_nongun_dir = "./dataset/test/non guns/"
+    os.makedirs(output_directory, exist_ok=True)
 
-    gun_features, gun_labels = process_sound_files(
-        input_gun_dir, label=1, augment_with_noise=True
-    )
-    nongun_features, nongun_labels = process_sound_files(
-        input_nongun_dir, label=0, augment_with_noise=True
-    )
+    gun_features, gun_labels = process_sound_files(input_gun_dir, label=1)
+    nongun_features, nongun_labels = process_sound_files(input_nongun_dir, label=0)
 
     features_array = np.vstack((gun_features, nongun_features))
     labels = np.hstack((gun_labels, nongun_labels))
@@ -221,47 +124,36 @@ if __name__ == "__main__":
     )
 
     model = create_cnn_model((features_array.shape[1], 1))
-    model, history = train_with_manual_backprop(
-        model, X_train_scaled, y_train, X_test_scaled, y_test, epochs=50, batch_size=16
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss", patience=5, restore_best_weights=True
     )
 
-    joblib.dump(scaler, "scaler.joblib")
-    plt.figure(figsize=(10, 6))
-
-    epochs_range = range(1, len(history["train_loss"]) + 1)
-
-    plt.plot(
-        epochs_range, history["train_accuracy"], label="Train Accuracy", color="blue"
+    history = model.fit(
+        X_train_scaled,
+        y_train,
+        epochs=50,  # Start with 50 and use early stopping to halt if necessary
+        batch_size=16,  # Start with 16; adjust if necessary based on memory usage
+        validation_split=0.2,
+        verbose=1,
     )
-    plt.plot(
-        epochs_range,
-        history["val_accuracy"],
-        label="Validation Accuracy",
-        color="green",
-    )
-    plt.plot(epochs_range, history["train_loss"], label="Train Loss", color="red")
-    plt.plot(epochs_range, history["val_loss"], label="Validation Loss", color="orange")
 
-    plt.xlabel("Epochs")
-    plt.ylabel("Accuracy/Loss")
-    plt.title("Accuracy and Loss over Epochs")
-    plt.legend(loc="best")
-    plt.grid(True)
-
-    plot_path = os.path.join(output_directory, "accuracy_loss_graph_v2.png")
-    plt.savefig(plot_path)
+    plt.plot(history.history["accuracy"])
+    plt.plot(history.history["val_accuracy"])
+    plt.title("Model Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend(["Training Accuracy", "Validation Accuracy"])
+    plt.savefig("model_analysis.png")
     plt.show()
+
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
     print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    path = os.path.join(current_dir, "models/handrecognition_model.h5")
-    model.save(path)
+    model.save("model_fft.h5")
 
-    test_features_gun, test_labels_gun = process_sound_files(
-        test_gun_dir, label=1, augment_with_noise=True
-    )
+    test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
     test_features_nongun, test_labels_nongun = process_sound_files(
-        test_nongun_dir, label=0, augment_with_noise=True
+        test_nongun_dir, label=0
     )
 
     test_features = np.vstack((test_features_gun, test_features_nongun))
