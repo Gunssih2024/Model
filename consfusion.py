@@ -59,7 +59,7 @@ def process_sound_files(input_dir, label):
 
 if __name__ == "__main__":
     # Load your saved model
-    model = tf.keras.models.load_model("model_fft.h5")
+    model = tf.keras.models.load_model("model_fft_v2.h5")
 
     # Load test data
     test_gun_dir = "./dataset/test/guns/"

@@ -40,6 +40,79 @@ def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=300
     return top_peak_frequencies, top_peak_magnitudes
 
 
+def train_with_manual_backprop(
+    model, X_train, y_train, X_val, y_val, epochs, batch_size
+):
+    optimizer = tf.keras.optimizers.Adam()
+    loss_fn = tf.keras.losses.BinaryCrossentropy()
+    train_loss = []
+    train_accuracy = []
+    val_loss = []
+    val_accuracy = []
+
+    # Prepare the training and validation datasets
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
+        batch_size
+    )
+    val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val)).batch(batch_size)
+
+    for epoch in range(epochs):
+        print(f"\nEpoch {epoch+1}/{epochs}")
+
+        # Initialize metrics for each epoch
+        epoch_train_loss = tf.keras.metrics.Mean()
+        epoch_train_accuracy = tf.keras.metrics.BinaryAccuracy()
+        epoch_val_loss = tf.keras.metrics.Mean()
+        epoch_val_accuracy = tf.keras.metrics.BinaryAccuracy()
+
+        # Training loop
+        for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
+            with tf.GradientTape() as tape:
+                logits = model(x_batch_train, training=True)
+                loss_value = loss_fn(y_batch_train, logits)
+
+            grads = tape.gradient(loss_value, model.trainable_weights)
+            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+            # Update metrics
+            epoch_train_loss.update_state(loss_value)
+            epoch_train_accuracy.update_state(y_batch_train, logits)
+
+            if step % 10 == 0:
+                print(f"Training loss at step {step}: {loss_value.numpy()}")
+
+        # End of epoch: calculate validation metrics
+        for x_batch_val, y_batch_val in val_dataset:
+            val_logits = model(x_batch_val, training=False)
+            val_loss_value = loss_fn(y_batch_val, val_logits)
+
+            epoch_val_loss.update_state(val_loss_value)
+            epoch_val_accuracy.update_state(y_batch_val, val_logits)
+
+        # Store the metrics for this epoch
+        train_loss.append(epoch_train_loss.result().numpy())
+        train_accuracy.append(epoch_train_accuracy.result().numpy())
+        val_loss.append(epoch_val_loss.result().numpy())
+        val_accuracy.append(epoch_val_accuracy.result().numpy())
+
+        print(
+            f"Epoch {epoch+1} - Training Loss: {epoch_train_loss.result().numpy()}, "
+            f"Training Accuracy: {epoch_train_accuracy.result().numpy()}, "
+            f"Validation Loss: {epoch_val_loss.result().numpy()}, "
+            f"Validation Accuracy: {epoch_val_accuracy.result().numpy()}"
+        )
+
+    # Return the model and the history of metrics
+    history = {
+        "train_loss": train_loss,
+        "train_accuracy": train_accuracy,
+        "val_loss": val_loss,
+        "val_accuracy": val_accuracy,
+    }
+
+    return model, history
+
+
 def read_audio(file_path):
     sample_rate, audio_data = wav.read(file_path)
     if len(audio_data.shape) > 1:
@@ -124,32 +197,33 @@ if __name__ == "__main__":
     )
 
     model = create_cnn_model((features_array.shape[1], 1))
-    early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=5, restore_best_weights=True
-    )
 
-    history = model.fit(
+    model, history = train_with_manual_backprop(
+        model,
         X_train_scaled,
         y_train,
-        epochs=50,  # Start with 50 and use early stopping to halt if necessary
-        batch_size=16,  # Start with 16; adjust if necessary based on memory usage
-        validation_split=0.2,
-        verbose=1,
+        X_test_scaled,  # You can also split the train set into train/val
+        y_test,  # if you want to keep test data separate
+        epochs=50,
+        batch_size=16,
     )
 
-    plt.plot(history.history["accuracy"])
-    plt.plot(history.history["val_accuracy"])
-    plt.title("Model Accuracy")
+    plt.figure(figsize=(12, 6))
+    plt.plot(history["train_accuracy"], label="Training Accuracy")
+    plt.plot(history["val_accuracy"], label="Validation Accuracy")
+    plt.plot(history["train_loss"], label="Training Loss")
+    plt.plot(history["val_loss"], label="Validation Loss")
+    plt.title("Training & Validation Accuracy and Loss")
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.legend(["Training Accuracy", "Validation Accuracy"])
-    plt.savefig("model_analysis.png")
+    plt.ylabel("Accuracy / Loss")
+    plt.legend()
+    plt.savefig("model_analysis_combined.png")
     plt.show()
 
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
     print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    model.save("model_fft.h5")
+    model.save("model_fft_v2.h5")
 
     test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
     test_features_nongun, test_labels_nongun = process_sound_files(
