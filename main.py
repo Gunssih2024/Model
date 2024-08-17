@@ -8,8 +8,12 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import time
-
+from sklearn.metrics import classification_report
+import mlflow
+import dagshub
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+# Initialize DagsHub with MLflow
+dagshub.init(repo_owner='sarthakdevil', repo_name='Model', mlflow=True)
 
 def towav(file_path):
     base = os.path.splitext(file_path)[0]
@@ -17,14 +21,12 @@ def towav(file_path):
     audio.export(f"{base}.wav", format="wav")
     print(f"Converted {file_path} to {base}.wav")
 
-
 def convert_all_mp3_to_wav(input_sound_dir):
     for f in os.listdir(input_sound_dir):
         if f.endswith(".mp3"):
             towav(os.path.join(input_sound_dir, f))
     wav_files = [f for f in os.listdir(input_sound_dir) if f.endswith(".wav")]
     return wav_files
-
 
 def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=3000):
     mask = (freq >= min_freq) & (freq <= max_freq)
@@ -39,18 +41,16 @@ def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=300
     top_peak_magnitudes = top_peak_magnitudes / np.max(top_peak_magnitudes)
     return top_peak_frequencies, top_peak_magnitudes
 
-
 def train_with_manual_backprop(
-    model, X_train, y_train, X_val, y_val, epochs, batch_size
+    model, X_train, y_train, X_val, y_val, epochs, batch_size, learning_rate=0.0001
 ):
-    optimizer = tf.keras.optimizers.Adam()
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     loss_fn = tf.keras.losses.BinaryCrossentropy()
     train_loss = []
     train_accuracy = []
     val_loss = []
     val_accuracy = []
 
-    # Prepare the training and validation datasets
     train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
         batch_size
     )
@@ -59,13 +59,11 @@ def train_with_manual_backprop(
     for epoch in range(epochs):
         print(f"\nEpoch {epoch+1}/{epochs}")
 
-        # Initialize metrics for each epoch
         epoch_train_loss = tf.keras.metrics.Mean()
         epoch_train_accuracy = tf.keras.metrics.BinaryAccuracy()
         epoch_val_loss = tf.keras.metrics.Mean()
         epoch_val_accuracy = tf.keras.metrics.BinaryAccuracy()
 
-        # Training loop
         for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
             with tf.GradientTape() as tape:
                 logits = model(x_batch_train, training=True)
@@ -74,14 +72,12 @@ def train_with_manual_backprop(
             grads = tape.gradient(loss_value, model.trainable_weights)
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
-            # Update metrics
             epoch_train_loss.update_state(loss_value)
             epoch_train_accuracy.update_state(y_batch_train, logits)
 
             if step % 10 == 0:
                 print(f"Training loss at step {step}: {loss_value.numpy()}")
 
-        # End of epoch: calculate validation metrics
         for x_batch_val, y_batch_val in val_dataset:
             val_logits = model(x_batch_val, training=False)
             val_loss_value = loss_fn(y_batch_val, val_logits)
@@ -89,7 +85,6 @@ def train_with_manual_backprop(
             epoch_val_loss.update_state(val_loss_value)
             epoch_val_accuracy.update_state(y_batch_val, val_logits)
 
-        # Store the metrics for this epoch
         train_loss.append(epoch_train_loss.result().numpy())
         train_accuracy.append(epoch_train_accuracy.result().numpy())
         val_loss.append(epoch_val_loss.result().numpy())
@@ -102,7 +97,6 @@ def train_with_manual_backprop(
             f"Validation Accuracy: {epoch_val_accuracy.result().numpy()}"
         )
 
-    # Return the model and the history of metrics
     history = {
         "train_loss": train_loss,
         "train_accuracy": train_accuracy,
@@ -112,20 +106,17 @@ def train_with_manual_backprop(
 
     return model, history
 
-
 def read_audio(file_path):
     sample_rate, audio_data = wav.read(file_path)
     if len(audio_data.shape) > 1:
         audio_data = np.mean(audio_data, axis=1)
     return sample_rate, audio_data
 
-
 def compute_fourier_transform(audio_data, sample_rate):
     n = len(audio_data)
     freq = np.fft.fftfreq(n, d=1 / sample_rate)
     audio_fft = np.fft.fft(audio_data)
     return freq, np.abs(audio_fft)
-
 
 def create_cnn_model(input_shape):
     model = models.Sequential(
@@ -142,7 +133,6 @@ def create_cnn_model(input_shape):
     )
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
-
 
 def process_sound_files(input_dir, label):
     wav_files = convert_all_mp3_to_wav(input_dir)
@@ -162,7 +152,6 @@ def process_sound_files(input_dir, label):
 
     return np.array(features_list), np.array(labels)
 
-
 if __name__ == "__main__":
     input_gun_dir = "./dataset/train/guns/"
     input_nongun_dir = "./dataset/train/non guns/"
@@ -177,70 +166,75 @@ if __name__ == "__main__":
     features_array = np.vstack((gun_features, nongun_features))
     labels = np.hstack((gun_labels, nongun_labels))
 
-    assert len(features_array) == len(
-        labels
-    ), "Mismatch between features and labels length"
+    assert len(features_array) == len(labels), "Mismatch between features and labels length"
 
-    features_reshaped = features_array.reshape(
-        features_array.shape[0], features_array.shape[1], 1
-    )
-    X_train, X_test, y_train, y_test = train_test_split(
-        features_reshaped, labels, test_size=0.2, random_state=42
-    )
+    features_reshaped = features_array.reshape(features_array.shape[0], features_array.shape[1], 1)
+    X_train, X_test, y_train, y_test = train_test_split(features_reshaped, labels, test_size=0.2, random_state=42)
 
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(
-        X_train.reshape(-1, X_train.shape[-1])
-    ).reshape(X_train.shape)
-    X_test_scaled = scaler.transform(X_test.reshape(-1, X_test.shape[-1])).reshape(
-        X_test.shape
-    )
+    X_train_scaled = scaler.fit_transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
+    X_test_scaled = scaler.transform(X_test.reshape(-1, X_test.shape[-1])).reshape(X_test.shape)
 
     model = create_cnn_model((features_array.shape[1], 1))
 
-    model, history = train_with_manual_backprop(
-        model,
-        X_train_scaled,
-        y_train,
-        X_test_scaled,  # You can also split the train set into train/val
-        y_test,  # if you want to keep test data separate
-        epochs=50,
-        batch_size=16,
-    )
+    with mlflow.start_run():
+        mlflow.log_param("model_type", "CNN with FFT Features")
+        mlflow.log_param("epochs", 50)
+        mlflow.log_param("batch_size", 16)
+        mlflow.log_param('parameter name', 'value')
+        mlflow.log_metric('metric name', 1)
 
-    plt.figure(figsize=(12, 6))
-    plt.plot(history["train_accuracy"], label="Training Accuracy")
-    plt.plot(history["val_accuracy"], label="Validation Accuracy")
-    plt.plot(history["train_loss"], label="Training Loss")
-    plt.plot(history["val_loss"], label="Validation Loss")
-    plt.title("Training & Validation Accuracy and Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy / Loss")
-    plt.legend()
-    plt.savefig("model_analysis_combined.png")
-    plt.show()
+        model, history = train_with_manual_backprop(
+            model,
+            X_train_scaled,
+            y_train,
+            X_test_scaled,
+            y_test,
+            epochs=50,
+            batch_size=16,
+        )
 
-    test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
-    print(f"Test accuracy on validation set: {test_accuracy:.4f}")
+        plt.figure(figsize=(12, 6))
+        plt.plot(history["train_accuracy"], label="Training Accuracy")
+        plt.plot(history["val_accuracy"], label="Validation Accuracy")
+        plt.plot(history["train_loss"], label="Training Loss")
+        plt.plot(history["val_loss"], label="Validation Loss")
+        plt.title("Training & Validation Accuracy and Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy / Loss")
+        plt.legend()
+        plt.savefig("model_analysis_combined.png")
+        plt.show()
 
-    model.save("model_fft_v2.h5")
+        # Log the plot as an artifact
+        mlflow.log_artifact("model_analysis_combined.png")
 
-    test_features_gun, test_labels_gun = process_sound_files(test_gun_dir, label=1)
-    test_features_nongun, test_labels_nongun = process_sound_files(
-        test_nongun_dir, label=0
-    )
+        test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
+        mlflow.log_metric("test_accuracy", test_accuracy)
+        print(f"Test accuracy on validation set: {test_accuracy:.4f}")
 
-    test_features = np.vstack((test_features_gun, test_features_nongun))
-    test_labels = np.hstack((test_labels_gun, test_labels_nongun))
+        # Predict on test data
+        y_pred = (model.predict(X_test_scaled) > 0.5).astype("int32").flatten()
+        y_pred_classes = np.round(y_pred).astype(int)
+        # Generate the classification report
+        report = classification_report(y_test, y_pred, output_dict=True)
+        cm = confusion_matrix(y_test, y_pred_classes)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+        disp.plot(cmap=plt.cm.Blues)
 
-    test_features_reshaped = test_features.reshape(
-        test_features.shape[0], test_features.shape[1], 1
-    )
-    test_features_scaled = scaler.transform(
-        test_features_reshaped.reshape(-1, test_features_reshaped.shape[-1])
-    ).reshape(test_features_reshaped.shape)
+        # Save the figure
+        plt.savefig("confusion_matrix.png")
+        plt.show()
 
-    test_loss, test_accuracy = model.evaluate(
-        test_features_scaled, test_labels, verbose=0
-    )
-    print(f"Test accuracy on new data: {test_accuracy:.4f}")
+        # Log the classification report as a JSON file
+        mlflow.log_dict(report, "classification_report.json")
+        mlflow.log_artifact("confusion_matrix.png")
+        # Alternatively, log as a text file
+        report_str = classification_report(y_test, y_pred)
+        mlflow.log_text(report_str, "classification_report.txt")
+
+        # Save the model
+        model.save("model_fft_v2.h5")
+        mlflow.keras.log_model(model, "model")
+
+        print("Model and classification report logged with MLflow and DagsHub.")

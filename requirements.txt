@@ -1,0 +1,8 @@
+numpy
+matplotlib
+pydub
+scipy
+tensorflow
+scikit-learn
+dagshub
+mlflow
