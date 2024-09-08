@@ -1,43 +1,14 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from pydub import AudioSegment
-import scipy.io.wavfile as wav
-from scipy.signal import find_peaks
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import time
 
-
-def towav(file_path):
-    base = os.path.splitext(file_path)[0]
-    audio = AudioSegment.from_mp3(file_path)
-    audio.export(f"{base}.wav", format="wav")
-    print(f"Converted {file_path} to {base}.wav")
-
-
-def convert_all_mp3_to_wav(input_sound_dir):
-    for f in os.listdir(input_sound_dir):
-        if f.endswith(".mp3"):
-            towav(os.path.join(input_sound_dir, f))
-    wav_files = [f for f in os.listdir(input_sound_dir) if f.endswith(".wav")]
-    return wav_files
-
-
-def find_magnitude_peaks(freq, audio_fft, num_peaks=20, min_freq=0, max_freq=3000):
-    mask = (freq >= min_freq) & (freq <= max_freq)
-    freq_filtered = freq[mask]
-    audio_fft_filtered = audio_fft[mask]
-    peaks, _ = find_peaks(audio_fft_filtered)
-    peak_frequencies = freq_filtered[peaks]
-    peak_magnitudes = audio_fft_filtered[peaks]
-    sorted_indices = np.argsort(peak_magnitudes)[::-1]
-    top_peak_frequencies = peak_frequencies[sorted_indices][:num_peaks]
-    top_peak_magnitudes = peak_magnitudes[sorted_indices][:num_peaks]
-    top_peak_magnitudes = top_peak_magnitudes / np.max(top_peak_magnitudes)
-    return top_peak_frequencies, top_peak_magnitudes
+from audio_processing import (
+    process_sound_files,
+)
 
 
 def train_with_manual_backprop(
@@ -59,7 +30,7 @@ def train_with_manual_backprop(
     for epoch in range(epochs):
         print(f"\nEpoch {epoch+1}/{epochs}")
 
-        # Initialize metrics for each epoch
+        # Initialize for each epoch
         epoch_train_loss = tf.keras.metrics.Mean()
         epoch_train_accuracy = tf.keras.metrics.BinaryAccuracy()
         epoch_val_loss = tf.keras.metrics.Mean()
@@ -113,20 +84,6 @@ def train_with_manual_backprop(
     return model, history
 
 
-def read_audio(file_path):
-    sample_rate, audio_data = wav.read(file_path)
-    if len(audio_data.shape) > 1:
-        audio_data = np.mean(audio_data, axis=1)
-    return sample_rate, audio_data
-
-
-def compute_fourier_transform(audio_data, sample_rate):
-    n = len(audio_data)
-    freq = np.fft.fftfreq(n, d=1 / sample_rate)
-    audio_fft = np.fft.fft(audio_data)
-    return freq, np.abs(audio_fft)
-
-
 def create_cnn_model(input_shape):
     model = models.Sequential(
         [
@@ -142,25 +99,6 @@ def create_cnn_model(input_shape):
     )
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
-
-
-def process_sound_files(input_dir, label):
-    wav_files = convert_all_mp3_to_wav(input_dir)
-    features_list = []
-    labels = []
-
-    for wav_file in wav_files:
-        wav_file_path = os.path.join(input_dir, wav_file)
-        sample_rate, audio_data = read_audio(wav_file_path)
-        freq, audio_fft = compute_fourier_transform(audio_data, sample_rate)
-        peak_frequencies, peak_magnitudes = find_magnitude_peaks(freq, audio_fft)
-        features = np.concatenate((peak_frequencies, peak_magnitudes))
-        features_list.append(features)
-        labels.append(label)
-
-        print(f"Processed: {wav_file}")
-
-    return np.array(features_list), np.array(labels)
 
 
 if __name__ == "__main__":
@@ -202,26 +140,28 @@ if __name__ == "__main__":
         model,
         X_train_scaled,
         y_train,
-        X_test_scaled,  # You can also split the train set into train/val
+        X_test_scaled,  # you can also split the train set into train/val
         y_test,  # if you want to keep test data separate
         epochs=50,
         batch_size=16,
     )
 
+    # Plotting Data
     plt.figure(figsize=(12, 6))
-    plt.plot(history["train_accuracy"], label="Training Accuracy")
-    plt.plot(history["val_accuracy"], label="Validation Accuracy")
-    plt.plot(history["train_loss"], label="Training Loss")
-    plt.plot(history["val_loss"], label="Validation Loss")
-    plt.title("Training & Validation Accuracy and Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy / Loss")
+    plt.plot(history["train_accuracy"], label="training accuracy")
+    plt.plot(history["val_accuracy"], label="validation accuracy")
+    plt.plot(history["train_loss"], label="training loss")
+    plt.plot(history["val_loss"], label="validation loss")
+    plt.title("training & validation accuracy and loss")
+    plt.xlabel("epoch")
+    plt.ylabel("accuracy / loss")
     plt.legend()
     plt.savefig("model_analysis_combined.png")
     plt.show()
 
+    # Training and testing data against Test data
     test_loss, test_accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
-    print(f"Test accuracy on validation set: {test_accuracy:.4f}")
+    print(f"test accuracy on validation set: {test_accuracy:.4f}")
 
     model.save("model_fft_v2.h5")
 

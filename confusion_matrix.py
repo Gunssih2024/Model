@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-# Function to read audio file and return sample rate and audio data
 def read_audio(file_path):
     audio_data, sample_rate = librosa.load(file_path, sr=None)
     if len(audio_data.shape) > 1:  # If stereo, convert to mono
@@ -16,7 +15,6 @@ def read_audio(file_path):
     return sample_rate, audio_data
 
 
-# Function to compute MFCC features
 def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
     mfccs = librosa.feature.mfcc(
         y=audio_data.astype(float), sr=sample_rate, n_mfcc=n_mfcc
@@ -24,7 +22,6 @@ def compute_mfcc(audio_data, sample_rate, n_mfcc=13):
     return mfccs
 
 
-# Function to preprocess the audio file
 def preprocess_file(file_path, scaler):
     sample_rate, audio_data = read_audio(file_path)
     mfccs = compute_mfcc(audio_data, sample_rate)
